@@ -1,79 +1,109 @@
 import streamlit as st
-import requests
+import feedparser
+from bs4 import BeautifulSoup
 from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="Berita Indonesia Terkini",
-    page_icon="📰",
+    page_title="Berita Indonesia Live",
+    page_icon="🇮🇩",
     layout="wide"
 )
 
-# --- API KEY & URL ---
-# Ganti tulisan di bawah dengan API Key Anda dari NewsAPI.org
-API_KEY = '428c4a89ed414600a0b732407a5c6329' 
-BASE_URL = "https://newsapi.org/v2/top-headlines"
+# --- CSS KHUSUS AGAR TAMPILAN LEBIH CANTIK ---
+st.markdown("""
+<style>
+    .card-img {border-radius: 10px; margin-bottom: 10px;}
+    .title-text {font-weight: bold; font-size: 18px; margin-bottom: 5px;}
+    .date-text {font-size: 12px; color: #666;}
+</style>
+""", unsafe_allow_html=True)
 
-# --- FUNGSI MENGAMBIL BERITA ---
-def get_news(category='general'):
-    params = {
-        'country': 'id',  # Fokus berita Indonesia
-        'category': category,
-        'apiKey': API_KEY
-    }
-    try:
-        response = requests.get(BASE_URL, params=params)
-        response.raise_for_status() # Cek jika ada error koneksi
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Gagal mengambil berita: {e}")
-        return None
+# --- SUMBER BERITA (RSS CNN INDONESIA) ---
+RSS_FEEDS = {
+    "Nasional": "https://www.cnnindonesia.com/nasional/rss",
+    "Ekonomi": "https://www.cnnindonesia.com/ekonomi/rss",
+    "Olahraga": "https://www.cnnindonesia.com/olahraga/rss",
+    "Teknologi": "https://www.cnnindonesia.com/teknologi/rss",
+    "Hiburan": "https://www.cnnindonesia.com/hiburan/rss",
+    "Gaya Hidup": "https://www.cnnindonesia.com/gaya-hidup/rss"
+}
 
-# --- UI UTAMA ---
-st.title("🇮🇩 Portal Berita Indonesia")
-st.markdown("Update berita terkini langsung dari sumber terpercaya.")
-
-# --- SIDEBAR (KATEGORI) ---
-with st.sidebar:
-    st.header("Kategori Berita")
-    category = st.selectbox(
-        "Pilih Topik:",
-        ('general', 'business', 'entertainment', 'health', 'science', 'sports', 'technology')
-    )
-    st.info("Dibuat dengan Python & Streamlit")
-
-# --- LOGIKA TAMPILAN ---
-news_data = get_news(category)
-
-if news_data and news_data['status'] == 'ok':
-    articles = news_data['articles']
+# --- FUNGSI PARSING BERITA ---
+def get_news(category):
+    url = RSS_FEEDS.get(category)
+    feed = feedparser.parse(url)
+    articles = []
     
-    # Layout Grid (3 kolom)
+    for entry in feed.entries:
+        # Coba ambil gambar dari berbagai kemungkinan field RSS
+        image_url = ""
+        if 'media_content' in entry:
+            image_url = entry.media_content[0]['url']
+        elif 'links' in entry:
+            for link in entry.links:
+                if link.get('type', '').startswith('image/'):
+                    image_url = link['href']
+                    break
+        
+        # Jika gambar ada di dalam deskripsi HTML
+        if not image_url and 'summary' in entry:
+            soup = BeautifulSoup(entry.summary, 'html.parser')
+            img_tag = soup.find('img')
+            if img_tag:
+                image_url = img_tag['src']
+
+        # Bersihkan tanggal publish
+        published = entry.get('published', 'Baru saja')
+        
+        articles.append({
+            "title": entry.title,
+            "link": entry.link,
+            "published": published,
+            "image": image_url,
+            "summary": entry.summary
+        })
+    return articles
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("📰 Kanal Berita")
+    selected_category = st.radio("Pilih Topik:", list(RSS_FEEDS.keys()))
+    st.markdown("---")
+    st.caption("Sumber: CNN Indonesia RSS")
+    st.caption("Develop by Python Streamlit")
+
+# --- HALAMAN UTAMA ---
+st.title(f"🇮🇩 Berita Terkini: {selected_category}")
+st.markdown("Update langsung secara *real-time*.")
+st.divider()
+
+# Ambil Berita
+news_items = get_news(selected_category)
+
+# Tampilkan dalam Grid
+if news_items:
+    # Buat layout 3 kolom
     cols = st.columns(3)
     
-    for index, article in enumerate(articles):
-        # Filter: Hanya tampilkan jika ada gambar dan deskripsi agar rapi
-        if article['urlToImage'] and article['description']:
-            with cols[index % 3]:
-                with st.container(border=True):
-                    # Gambar Berita
-                    st.image(article['urlToImage'], use_column_width=True)
-                    
-                    # Judul
-                    st.subheader(article['title'])
-                    
-                    # Sumber & Waktu
-                    pub_date = datetime.strptime(article['publishedAt'], "%Y-%m-%dT%H:%M:%SZ")
-                    st.caption(f"Sumber: {article['source']['name']} | {pub_date.strftime('%d-%m-%Y %H:%M')}")
-                    
-                    # Deskripsi
-                    st.write(article['description'])
-                    
-                    # Tombol Baca Selengkapnya
-                    st.link_button("Baca Selengkapnya", article['url'])
+    for idx, item in enumerate(news_items):
+        with cols[idx % 3]:
+            with st.container(border=True):
+                # Tampilkan Gambar jika ada
+                if item['image']:
+                    st.image(item['image'], use_column_width=True)
+                
+                # Judul Berita
+                st.markdown(f"<div class='title-text'>{item['title']}</div>", unsafe_allow_html=True)
+                
+                # Tanggal
+                st.markdown(f"<div class='date-text'>📅 {item['published']}</div>", unsafe_allow_html=True)
+                
+                # Tombol Baca
+                st.link_button("Baca Selengkapnya 🔗", item['link'])
 else:
-    st.warning("Tidak ada berita ditemukan atau API Key salah.")
+    st.error("Gagal memuat berita. Cek koneksi internet.")
 
 # --- FOOTER ---
 st.markdown("---")
-st.markdown("<center>Copyright © 2024 - Portal Berita Python</center>", unsafe_allow_html=True)
+st.markdown("<center>Dibuat dengan ❤️ menggunakan Python</center>", unsafe_allow_html=True)

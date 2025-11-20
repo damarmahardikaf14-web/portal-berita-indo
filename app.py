@@ -1,109 +1,197 @@
 import streamlit as st
 import feedparser
 from bs4 import BeautifulSoup
-from datetime import datetime
+import time
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="Berita Indonesia Live",
+    page_title="Portal Berita Indonesia Terlengkap",
     page_icon="🇮🇩",
     layout="wide"
 )
 
-# --- CSS KHUSUS AGAR TAMPILAN LEBIH CANTIK ---
+# --- CSS UNTUK TAMPILAN MODERN ---
 st.markdown("""
 <style>
-    .card-img {border-radius: 10px; margin-bottom: 10px;}
-    .title-text {font-weight: bold; font-size: 18px; margin-bottom: 5px;}
-    .date-text {font-size: 12px; color: #666;}
+    .card-container {
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 20px;
+        height: 100%;
+        transition: transform 0.2s;
+    }
+    .card-container:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .news-title {
+        font-weight: 700;
+        font-size: 16px;
+        margin-bottom: 8px;
+        line-height: 1.4;
+        color: #ffffff; 
+    }
+    .news-meta {
+        font-size: 12px;
+        color: #aaaaaa;
+        margin-bottom: 10px;
+    }
+    .stButton button {
+        width: 100%;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- SUMBER BERITA (RSS CNN INDONESIA) ---
-RSS_FEEDS = {
-    "Nasional": "https://www.cnnindonesia.com/nasional/rss",
-    "Ekonomi": "https://www.cnnindonesia.com/ekonomi/rss",
-    "Olahraga": "https://www.cnnindonesia.com/olahraga/rss",
-    "Teknologi": "https://www.cnnindonesia.com/teknologi/rss",
-    "Hiburan": "https://www.cnnindonesia.com/hiburan/rss",
-    "Gaya Hidup": "https://www.cnnindonesia.com/gaya-hidup/rss"
+# --- DATABASE SUMBER BERITA (RSS) ---
+# Kita kelompokkan berdasarkan Nama Media
+NEWS_SOURCES = {
+    "CNN Indonesia": {
+        "Terbaru": "https://www.cnnindonesia.com/nasional/rss",
+        "Ekonomi": "https://www.cnnindonesia.com/ekonomi/rss",
+        "Olahraga": "https://www.cnnindonesia.com/olahraga/rss",
+        "Teknologi": "https://www.cnnindonesia.com/teknologi/rss",
+        "Hiburan": "https://www.cnnindonesia.com/hiburan/rss"
+    },
+    "Antara News": {
+        "Terbaru": "https://www.antaranews.com/rss/terkini.xml",
+        "Ekonomi": "https://www.antaranews.com/rss/ekonomi-bisnis.xml",
+        "Dunia": "https://www.antaranews.com/rss/dunia.xml",
+        "Olahraga": "https://www.antaranews.com/rss/olahraga.xml",
+        "Tekno": "https://www.antaranews.com/rss/tekno.xml"
+    },
+    "CNBC Indonesia": {
+        "Market": "https://www.cnbcindonesia.com/market/rss",
+        "Investment": "https://www.cnbcindonesia.com/investment/rss",
+        "News": "https://www.cnbcindonesia.com/news/rss",
+        "Tech": "https://www.cnbcindonesia.com/tech/rss"
+    },
+    "Suara.com": {
+        "Nasional": "https://www.suara.com/rss/news",
+        "Bisnis": "https://www.suara.com/rss/bisnis",
+        "Bola": "https://www.suara.com/rss/bola",
+        "Tekno": "https://www.suara.com/rss/tekno"
+    },
+     "Okezone": {
+        "Berita": "https://sindikasi.okezone.com/index.php/rss/0/RSS12",
+        "Bola": "https://sindikasi.okezone.com/index.php/rss/0/RSS12",
+        "Sports": "https://sindikasi.okezone.com/index.php/rss/0/RSS2",
+        "Economy": "https://sindikasi.okezone.com/index.php/rss/0/RSS11"
+    }
 }
 
-# --- FUNGSI PARSING BERITA ---
-def get_news(category):
-    url = RSS_FEEDS.get(category)
-    feed = feedparser.parse(url)
-    articles = []
+# --- FUNGSI PENCARI GAMBAR CERDAS ---
+def extract_image(entry):
+    """Mencoba mencari gambar dari berbagai kemungkinan tag RSS"""
+    # 1. Cek media_content (Standar umum)
+    if 'media_content' in entry:
+        return entry.media_content[0]['url']
     
-    for entry in feed.entries:
-        # Coba ambil gambar dari berbagai kemungkinan field RSS
-        image_url = ""
-        if 'media_content' in entry:
-            image_url = entry.media_content[0]['url']
-        elif 'links' in entry:
-            for link in entry.links:
-                if link.get('type', '').startswith('image/'):
-                    image_url = link['href']
-                    break
-        
-        # Jika gambar ada di dalam deskripsi HTML
-        if not image_url and 'summary' in entry:
-            soup = BeautifulSoup(entry.summary, 'html.parser')
-            img_tag = soup.find('img')
-            if img_tag:
-                image_url = img_tag['src']
+    # 2. Cek media_thumbnail
+    if 'media_thumbnail' in entry:
+        return entry.media_thumbnail[0]['url']
 
-        # Bersihkan tanggal publish
-        published = entry.get('published', 'Baru saja')
+    # 3. Cek links (biasanya ada type image/jpeg)
+    if 'links' in entry:
+        for link in entry.links:
+            if link.get('type', '').startswith('image/'):
+                return link['href']
+            if link.get('rel') == 'enclosure' and link.get('type', '').startswith('image/'):
+                return link['href']
+
+    # 4. Cek tag <img> di dalam deskripsi HTML (Scraping manual)
+    if 'summary' in entry:
+        soup = BeautifulSoup(entry.summary, 'html.parser')
+        img = soup.find('img')
+        if img and img.get('src'):
+            return img['src']
+            
+    # 5. Gambar Default jika tidak ketemu
+    return "https://via.placeholder.com/400x200.png?text=Berita+Indonesia"
+
+# --- FUNGSI UTAMA PENGAMBIL BERITA ---
+@st.cache_data(ttl=300) # Cache data selama 5 menit agar loading cepat
+def fetch_news(rss_url):
+    feed = feedparser.parse(rss_url)
+    news_items = []
+    
+    for entry in feed.entries[:20]: # Ambil maksimal 20 berita
+        image = extract_image(entry)
         
-        articles.append({
+        # Bersihkan tanggal
+        published = entry.get('published', 'Baru saja')
+        # Potong tanggal jika terlalu panjang
+        if len(published) > 20: 
+             published = published[:25] + "..."
+
+        news_items.append({
             "title": entry.title,
             "link": entry.link,
             "published": published,
-            "image": image_url,
-            "summary": entry.summary
+            "image": image,
+            "source": feed.feed.get('title', 'News Source')
         })
-    return articles
+    return news_items
 
-# --- SIDEBAR ---
+# --- SIDEBAR NAVIGASI ---
 with st.sidebar:
-    st.header("📰 Kanal Berita")
-    selected_category = st.radio("Pilih Topik:", list(RSS_FEEDS.keys()))
-    st.markdown("---")
-    st.caption("Sumber: CNN Indonesia RSS")
-    st.caption("Develop by Python Streamlit")
+    st.title("🌐 Sumber Berita")
+    
+    # 1. Pilih Media
+    selected_provider = st.selectbox("Pilih Media:", list(NEWS_SOURCES.keys()))
+    
+    # 2. Pilih Kategori (Berubah sesuai media yang dipilih)
+    categories = NEWS_SOURCES[selected_provider]
+    selected_category = st.radio("Kategori:", list(categories.keys()))
+    
+    st.divider()
+    st.info("Website ini menggabungkan RSS Feed dari berbagai media terpercaya di Indonesia.")
+    
+    if st.button("🔄 Refresh Berita"):
+        st.cache_data.clear() # Hapus cache manual
 
 # --- HALAMAN UTAMA ---
-st.title(f"🇮🇩 Berita Terkini: {selected_category}")
-st.markdown("Update langsung secara *real-time*.")
-st.divider()
+rss_link = NEWS_SOURCES[selected_provider][selected_category]
 
-# Ambil Berita
-news_items = get_news(selected_category)
+st.title(f"{selected_provider} - {selected_category}")
+st.caption(f"Update terkini dari {rss_link}")
 
-# Tampilkan dalam Grid
-if news_items:
-    # Buat layout 3 kolom
-    cols = st.columns(3)
-    
-    for idx, item in enumerate(news_items):
-        with cols[idx % 3]:
-            with st.container(border=True):
-                # Tampilkan Gambar jika ada
-                if item['image']:
-                    st.image(item['image'], use_column_width=True)
-                
-                # Judul Berita
-                st.markdown(f"<div class='title-text'>{item['title']}</div>", unsafe_allow_html=True)
-                
-                # Tanggal
-                st.markdown(f"<div class='date-text'>📅 {item['published']}</div>", unsafe_allow_html=True)
-                
-                # Tombol Baca
-                st.link_button("Baca Selengkapnya 🔗", item['link'])
-else:
-    st.error("Gagal memuat berita. Cek koneksi internet.")
+# Loading animation
+with st.spinner('Sedang mengambil berita terbaru...'):
+    try:
+        news_data = fetch_news(rss_link)
+        
+        # TAMPILAN GRID (3 Kolom)
+        cols = st.columns(3)
+        
+        for idx, item in enumerate(news_data):
+            with cols[idx % 3]:
+                # Card Container
+                with st.container(border=True):
+                    # Gambar
+                    st.image(item['image'], use_column_width=True, output_format='JPEG')
+                    
+                    # Judul
+                    st.markdown(f"<div class='news-title'>{item['title']}</div>", unsafe_allow_html=True)
+                    
+                    # Tanggal
+                    st.markdown(f"<div class='news-meta'>🕒 {item['published']}</div>", unsafe_allow_html=True)
+                    
+                    # Tombol
+                    st.link_button("Baca Selengkapnya 🔗", item['link'])
+                    
+    except Exception as e:
+        st.error(f"Maaf, gagal memuat berita dari sumber ini. Error: {e}")
 
 # --- FOOTER ---
 st.markdown("---")
-st.markdown("<center>Dibuat dengan ❤️ menggunakan Python</center>", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .footer {text-align: center; color: grey; font-size: small;}
+    </style>
+    <div class="footer">
+    Developed with ❤️ using Python Streamlit | Aggregator Berita Indonesia
+    </div>
+    """, unsafe_allow_html=True
+)

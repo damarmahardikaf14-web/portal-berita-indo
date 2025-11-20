@@ -11,7 +11,7 @@ st.set_page_config(
 
 # --- API KEY & URL ---
 # Ganti tulisan di bawah dengan API Key Anda dari NewsAPI.org
-API_KEY = 'MASUKKAN_API_KEY_ANDA_DISINI' 
+API_KEY = '428c4a89ed414600a0b732407a5c6329' 
 BASE_URL = "https://newsapi.org/v2/top-headlines"
 
 # --- FUNGSI MENGAMBIL BERITA ---
